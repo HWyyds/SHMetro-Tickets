@@ -1,0 +1,25 @@
+const assert=require('node:assert/strict'),T=require('./ticket-engine.js'),F=require('./fare-engine.js');
+function trip(date,time,price=3,lines=['16']){return {date,time,from:{name:'龙阳路',line:'16号线'},to:{name:'滴水湖',line:'16号线'},result:{paths:[{price,lines,stations:['龙阳路','滴水湖'],stationIds:lines.map(l=>l.padStart(2,'0')+'21')}]},path:0,cardPrices:[price]}}
+const settings={dayStart:'2026-10-31T13:00',threeStart:'2026-10-31T13:00',month:'2026-10',cumulative:67,cardEligible:true};
+let p=T.plan([trip('2026-10-31','12:00')],settings,[]);
+assert.equal(p.total,270,'threshold crossing trip discounted');
+p=T.plan([trip('2026-10-31','12:00'),trip('2026-11-01','12:00')],settings,[]);
+assert.equal(p.total,570);assert.equal(p.rows[1].before,0);assert(p.rows[1].reset);
+const pass=T.windowFor('day',settings.dayStart);
+p=T.plan([trip('2026-11-01','12:59'),trip('2026-10-31','12:59'),trip('2026-10-31','13:00'),trip('2026-11-01','13:00')],settings,[pass]);
+assert.deepEqual(p.rows.map(r=>r.pass),[null,'day','day',null]);
+assert.equal(p.rows[2].after,0,'pass does not accumulate');
+const three=T.windowFor('three',settings.threeStart);
+assert.equal(T.plan([trip('2026-11-03','12:59'),trip('2026-11-03','13:00')],settings,[three]).rows.filter(r=>r.pass).length,1);
+p=T.plan([trip('2026-10-31','13:00',20,['16','51'])],settings,[pass]);
+assert.equal(p.rows[0].charge,2000);assert.equal(p.rows[0].after,6700);assert.equal(p.rows[0].pass,null);
+p=T.plan([trip('2026-10-31','12:00')],{...settings,cardEligible:false},[]);assert.equal(p.total,300);
+const unknown=trip('2026-10-31','12:00');unknown.cardPrices=[];
+assert.equal(T.plan([unknown],settings,[]).total,null);
+unknown.time='14:00';assert.equal(T.plan([unknown],settings,[pass]).total,1800,'covered pass needs no card fare');
+assert.throws(()=>T.windowFor('day',''));
+const route={stationIds:['1621','1633']};
+assert.equal(F.matchCardPath(route,{paths:[{stationIds:['1621','1633'],price:9}]}),9);
+assert.equal(F.matchCardPath(route,{paths:[{stationIds:['1621','1622','1633'],price:8}]}),null);
+assert(F.url('1621','1633',6,'oneCard').includes('ticket=oneCard'));
+console.log('PASS: threshold, monthly reset, sorting, 24h/72h bounds, excluded lines, missing card fare, route matching.');
