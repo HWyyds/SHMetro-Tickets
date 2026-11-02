@@ -57,9 +57,9 @@ function renderTrips(){
 }
 function installTickets(){
   document.querySelectorAll('[data-tab="network"],#network,#networkTab').forEach(e=>e.remove());
-  $('#results').insertAdjacentHTML('afterend',`<section class="panel input-panel" id="ticketSettings" style="margin-top:24px"><h2>通票启用时间与交通卡</h2><p>所有时间均为北京时间。启用时间指首次刷票进站时间，可早于本次规划的第一程。</p><div class="field-grid"><label>一日票 ¥18 · 首次进站<input id="dayStart" type="datetime-local" value="${today()}T13:00"></label><label>三日票 ¥45 · 首次进站<input id="threeStart" type="datetime-local" value="${today()}T13:00"></label></div><p id="ticketWindows"></p><div class="field-grid"><label>交通卡优惠资格<select id="cardEligible"><option value="yes">上海公共交通卡 / 随申码（有资格）</option><option value="no">不符合70元累计优惠条件</option></select></label><label>已有累计金额所属月份<input id="cardMonth" type="month" value="${today().slice(0,7)}"></label><label>该月、规划首程之前的合格累计金额（元）<input id="cardCumulative" type="number" min="0" step="0.01" value="0"></label><div><button class="ghost-btn" id="already70">该月已满70元</button></div></div><p>累计满70元的当笔开始九折；后续月份从0重新累计。通票覆盖的乘次不计入交通卡累计，购票费也不计入。以下按每段独立进出站计算，不叠加公交联乘优惠。</p><p>24/72小时按进站时间判断，到期时刻起不可再进站；有效期内进站的行程不因途中到期而改为另付。此出站处理沿用你提供的规则；该两页未写明到期边界及同站冷却细则。</p></section><section style="margin-top:28px"><h2>方案比较与逐段用票</h2><p>比较你填写的启用时间下各一张通票的搭配，票款按18/45元计入。按所选路径和下述用票方式比较，不代表任意多张票的全局最优解。</p><div id="ticketComparisons" class="results-grid"></div><label>查看方案明细<select id="detailPlan"></select></label><div id="ticketDetails" class="panel input-panel" style="margin-top:12px;overflow:auto"></div><p>磁浮、市域等混合行程不对整笔套九折，也不直接用通票抵扣；本版保守列为官方单程票另付，可将普通地铁段与特殊段分开规划。</p></section>`);
+  $('#results').insertAdjacentHTML('afterend',`<section class="panel input-panel" id="ticketSettings" style="margin-top:24px"><h2>多日通票组合优化</h2><p>算法按全部行程时间自动比较刷卡、启用一日票、启用三日票，并决定需要购买几张票。</p><div class="field-grid"><label>交通卡优惠资格<select id="cardEligible"><option value="yes">上海公共交通卡 / 随申码（有资格）</option><option value="no">不符合70元累计优惠条件</option></select></label><label>已有累计金额所属月份<input id="cardMonth" type="month" value="${today().slice(0,7)}"></label><label>规划首程前累计金额（元）<input id="cardCumulative" type="number" min="0" step="0.01" value="0"></label><div><button class="ghost-btn" id="already70">该月已满70元</button></div></div><p id="ticketWindows"></p><p>每张通票从算法选中的进站时刻启用，分别覆盖之后24小时或72小时。满70元当笔起九折，次月首次进站时清零。</p></section><section style="margin-top:28px"><h2>方案比较与逐段用票</h2><div id="ticketComparisons" class="results-grid"></div><label>查看方案明细<select id="detailPlan"></select></label><div id="ticketDetails" class="panel input-panel" style="margin-top:12px;overflow:auto"></div><p>特殊线路当前按官方单程票另付，公交联乘和虚拟换乘不在此次优化范围内。</p></section>`);
   $('#rules .input-panel p:last-child').outerHTML=`<h3>通票与累计优惠</h3><p><a href="https://service.shmetro.com/cpxz/index.htm" target="_blank" rel="noopener">官方车票使用须知</a>：一日票/三日票从首次进站起24/72小时内运营时段有效；磁浮及2024年起开通的市域线除外。</p><p><a href="https://service.shmetro.com/pwyh/index.htm" target="_blank" rel="noopener">官方票务优惠</a>：满70元的当笔即享9折，次月首次进站时清零。67元+3元的乘次扣2.70元。价格18/45元沿用项目指定票价；这两页正文未列出售价格。</p>`;
-  for(const id of ['dayStart','threeStart','cardEligible','cardMonth','cardCumulative'])$('#'+id).oninput=renderTickets;
+  for(const id of ['cardEligible','cardMonth','cardCumulative'])$('#'+id).oninput=renderTickets;
   $('#already70').onclick=()=>{$('#cardCumulative').value='70';renderTickets()};
   $('#detailPlan').onchange=renderTickets;
   attachTripTimes();renderTickets();
@@ -90,13 +90,14 @@ function renderTickets(){
   const time=ms=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(ms);
   try{
     if(!$('#cardCumulative').value||!$('#cardMonth').value)throw Error('请填写累计金额和所属月份');
-    const settings={dayStart:$('#dayStart').value,threeStart:$('#threeStart').value,month:$('#cardMonth').value,cumulative:Number($('#cardCumulative').value),cardEligible:$('#cardEligible').value==='yes'};
+    const settings={month:$('#cardMonth').value,cumulative:Number($('#cardCumulative').value),cardEligible:$('#cardEligible').value==='yes'};
     const plans=MetroTickets.compare(state.trips,settings);
-    $('#ticketWindows').textContent='一日票到期：'+time(plans[1].passes[0].end)+'；三日票到期：'+time(plans[2].passes[0].end);
+    const windows=plans.slice(1).flatMap(p=>p.passes||[]).map(p=>`${p.name} ${time(p.start)}–${time(p.end)}`);
+    $('#ticketWindows').textContent=windows.length?'候选通票窗口：'+windows.join('；'):'加入行程后显示实际启用窗口';
     if(state.trips.some(t=>t.needsRefresh))throw Error('有行程更改了日期，请重新查询该段票价后再比较');
     if(!state.trips.length){$('#ticketComparisons').textContent='加入行程后显示方案成本和逐段使用方式。';$('#ticketDetails').textContent='暂无行程';return}
     const best=Math.min(...plans.filter(p=>p.complete).map(p=>p.total));
-    $('#ticketComparisons').innerHTML=plans.map(p=>`<article class="panel result-card ${p.complete&&p.total===best?'best':''}"><h3>${p.name}</h3><div class="result-cost">${money(p.total)}</div><p>通票 ${money(p.passes.reduce((s,x)=>s+x.price,0))} + 另付 ${p.complete?money(p.rows.reduce((s,r)=>s+r.charge,0)):'有未匹配票价'}</p>${p.complete&&p.total===best?'<small>当前完整可算方案中费用最低</small>':''}</article>`).join('');
+    $('#ticketComparisons').innerHTML=plans.map(p=>`<article class="panel result-card ${p.complete&&p.total===best?'best':''}"><h3>${p.name}</h3><div class="result-cost">${money(p.total)}</div><p>一日票 ${p.passes.filter(x=>x.kind==='day').length} 张 · 三日票 ${p.passes.filter(x=>x.kind==='three').length} 张<br>通票 ${money(p.passes.reduce((s,x)=>s+x.price,0))} + 另付 ${p.complete?money(p.rows.reduce((s,r)=>s+r.charge,0)):'有未匹配票价'}</p>${p.passes.map(x=>`<small>${x.name} ${time(x.start)} 启用</small>`).join('；')} ${p.complete&&p.total===best?'<small>当前完整可算方案中费用最低</small>':''}</article>`).join('');
     const choice=$('#detailPlan').value||'1';
     $('#detailPlan').innerHTML=plans.map((p,i)=>`<option value="${i}">${p.name}</option>`).join('');$('#detailPlan').value=choice;
     const chosen=plans[Number(choice)];

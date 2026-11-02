@@ -1,60 +1,20 @@
-/* Rules checked against service.shmetro.com/{cpxz,pwyh}/index.htm, 2026-10-31.
-   All monetary calculations use cents. Inputs are Shanghai local times. */
 (function(root){
-  const products={day:{name:'一日票',hours:24,price:1800},three:{name:'三日票',hours:72,price:4500}};
-  function stamp(local){
-    if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local||''))throw Error('请填写完整的北京时间');
-    const value=Date.parse(local+':00+08:00');
-    if(!Number.isFinite(value))throw Error('时间无效');
-    return value;
-  }
-  function metroOnly(trip){
-    const path=trip.result.paths[trip.path];
-    const codes=[...(path.lines||[]),...(path.stationIds||[]).map(id=>id.slice(0,2))];
-    const stationOK=s=>/^(?:[1-9]|1[0-8])号线$/.test(s.line)||s.line==='浦江线';
-    return stationOK(trip.from)&&stationOK(trip.to)&&codes.length>0&&codes.every(c=>{const n=Number(c);return (n>=1&&n<=18)||n===41||n===61});
-  }
-  function windowFor(kind,start){return {kind,...products[kind],start:stamp(start),end:stamp(start)+products[kind].hours*3600000}}
-  function plan(trips,settings,passes){
-    const sorted=trips.map((t,index)=>({...t,index,at:stamp(t.date+'T'+t.time)})).sort((a,b)=>a.at-b.at||a.index-b.index);
-    let month='',cumulative=0,total=passes.reduce((s,p)=>s+p.price,0),complete=true;
-    const rows=[];
-    for(const t of sorted){
-      const nextMonth=t.date.slice(0,7);
-      const reset=!!month&&month!==nextMonth;
-      if(month!==nextMonth){month=nextMonth;cumulative=month===settings.month?Math.round(settings.cumulative*100):0}
-      const before=cumulative,eligible=metroOnly(t),path=t.result.paths[t.path];
-      const pass=eligible&&passes.find(p=>t.at>=p.start&&t.at<p.end);
-      let charge=null,method='',reason='',discount=false;
-      if(pass){charge=0;method=pass.name;reason='进站时处于有效期内';}
-      else{
-        const base=Number.isFinite(t.cardPrices?.[t.path])?Math.round(t.cardPrices[t.path]*100):null;
-        reason=!eligible?'包含特殊线路或缺少线路信息，通票不可整程覆盖':passes.length?(passes.some(p=>t.at<p.start)?'未启用 / 不在有效窗口内':'通票已到期'):'未使用通票';
-        if(!eligible){method='另购单程票';charge=Math.round(path.price*100);reason+='；按官方单程票另付（跨系统优惠未拆分）';}
-        else if(base===null){method='交通卡票价待查';complete=false;reason+='；未取得相同路径交通卡基础价';}
-        else if(settings.cardEligible){
-          discount=cumulative+base>=7000;
-          charge=discount?Math.round(base*0.9):base;
-          cumulative=Math.min(7000,cumulative+base);
-          method=discount?'交通卡 · 9折':'交通卡 · 原价';
-          if(discount&&before<7000)reason+='；本笔达到70元，即享9折';
-        }else{charge=base;method='交通卡 · 无累计优惠资格';}
-      }
-      if(charge!==null)total+=charge;
-      rows.push({index:t.index,trip:t,charge,method,reason,discount,before,after:cumulative,reset,eligible,pass:pass?.kind||null});
-    }
-    return {rows,passes,total:complete?total:null,knownTotal:total,complete};
-  }
-  function compare(trips,settings){
-    if(!Number.isFinite(settings.cumulative)||settings.cumulative<0)throw Error('累计金额应为不小于0的数字');
-    const day=windowFor('day',settings.dayStart),three=windowFor('three',settings.threeStart);
-    return [
-      {name:'交通卡 / 特殊线路另购票',...plan(trips,settings,[])},
-      {name:'一日票 + 交通卡',...plan(trips,settings,[day])},
-      {name:'三日票 + 交通卡',...plan(trips,settings,[three])},
-      {name:'一日票 + 三日票 + 交通卡',...plan(trips,settings,[day,three])}
-    ];
-  }
-  const api={products,stamp,metroOnly,windowFor,plan,compare};
-  if(typeof module!=='undefined')module.exports=api;else root.MetroTickets=api;
+const products={day:{name:'一日票',hours:24,price:1800},three:{name:'三日票',hours:72,price:4500}};
+function stamp(local){if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local||''))throw Error('请填写完整的北京时间');const v=Date.parse(local+':00+08:00');if(!Number.isFinite(v))throw Error('时间无效');return v}
+function metroOnly(t){const p=t.result.paths[t.path],codes=[...(p.lines||[]),...(p.stationIds||[]).map(id=>id.slice(0,2))],ok=s=>/^(?:[1-9]|1[0-8])号线$/.test(s.line)||s.line==='浦江线';return ok(t.from)&&ok(t.to)&&codes.length>0&&codes.every(c=>{const n=Number(c);return n>=1&&n<=18||n===41||n===61})}
+function windowFor(kind,start){return {kind,...products[kind],start:stamp(start),end:stamp(start)+products[kind].hours*3600000}}
+function base(t){return Number.isFinite(t.cardPrices?.[t.path])?Math.round(t.cardPrices[t.path]*100):null}
+function card(t,state,settings){const b=base(t);if(b===null)return null;const m=t.date.slice(0,7),before=m===state.month?state.cumulative:(m===settings.month?Math.round(settings.cumulative*100):0),discount=!!settings.cardEligible&&before+b>=7000;return {charge:discount?Math.round(b*.9):b,discount,before,after:settings.cardEligible?Math.min(7000,before+b):before+b,month:m}}
+function makeRow(t,method,charge,x={}){return {index:t.index,trip:t,charge,method,reason:x.reason||'',discount:!!x.discount,before:x.before||0,after:x.after||0,reset:!!x.reset,eligible:x.eligible,pass:x.pass||null}}
+function optimize(trips,settings,allowed={day:true,three:true}){
+ if(!Number.isFinite(settings.cumulative)||settings.cumulative<0)throw Error('累计金额应为不小于0的数字');const sorted=trips.map((t,index)=>({...t,index,at:stamp(t.date+'T'+t.time)})).sort((a,b)=>a.at-b.at||a.index-b.index),memo=new Map();
+ function choose(a,b){return !b||a.cost<b.cost?a:b}
+ function solve(i,active,state){if(i>=sorted.length)return {cost:0,purchases:[],rows:[],complete:true};const t=sorted[i],pass=active&&t.at<active.end?active:null,key=[i,pass?.kind||'',pass?.end||0,state.month,state.cumulative].join('|');if(memo.has(key))return memo.get(key);const eligible=metroOnly(t);let best=null;
+  if(pass&&eligible){const z=solve(i+1,pass,state);best={cost:z.cost,purchases:z.purchases,rows:[makeRow(t,pass.name,0,{pass:pass.kind,eligible:true,reason:`${pass.name}有效期内`}),...z.rows],complete:z.complete}}
+  else {const c=card(t,state,settings);if(c){const z=solve(i+1,null,{month:c.month,cumulative:c.after});best={cost:c.charge+z.cost,purchases:z.purchases,rows:[makeRow(t,c.discount?'交通卡 · 9折':(settings.cardEligible?'交通卡 · 原价':'交通卡 · 无累计优惠资格'),c.charge,{eligible,discount:c.discount,before:c.before,after:c.after,reset:state.month!==c.month,reason:c.discount&&c.before<7000?'本笔达到70元，即享9折':eligible?'未启用通票':'特殊线路只能另付'}),...z.rows],complete:z.complete}}
+   if(eligible)for(const kind of ['day','three'])if(allowed[kind]){const q=products[kind],np={kind,name:q.name,start:t.at,end:t.at+q.hours*3600000},z=solve(i+1,np,state),candidate={cost:q.price+z.cost,purchases:[{...np,trip:t},...z.purchases],rows:[makeRow(t,q.name,0,{pass:kind,eligible:true,reason:`本段首次进站启用，覆盖${q.hours}小时`}),...z.rows],complete:z.complete};best=choose(candidate,best)}
+  }memo.set(key,best);return best}
+ const result=solve(0,null,{month:settings.month,cumulative:Math.round(settings.cumulative*100)});return {name:'自动优化：多日通票 + 交通卡',...result,passes:result.purchases,total:result.complete?result.cost:null,knownTotal:result.cost,optimized:true}}
+function compare(trips,settings){return [{...optimize(trips,settings,{day:false,three:false}),name:'全程交通卡 / 特殊线路另付'},{...optimize(trips,settings,{day:true,three:false}),name:'自动组合一日票 + 交通卡'},{...optimize(trips,settings,{day:false,three:true}),name:'自动组合三日票 + 交通卡'},{...optimize(trips,settings,{day:true,three:true}),name:'自动组合一日票、三日票 + 交通卡'}]}
+const api={products,stamp,metroOnly,windowFor,optimize,compare,plan:(trips,settings,passes)=>optimize(trips,settings,{day:passes.some(p=>p.kind==='day'),three:passes.some(p=>p.kind==='three')})};if(typeof module!=='undefined')module.exports=api;else root.MetroTickets=api;
 })(typeof window==='undefined'?globalThis:window);
